@@ -34,10 +34,10 @@ def parse_args():
     parser.add_argument("--resolution", type=int, default=1024, choices=[512, 1024, 1536],
                         help="Voxel resolution for geometry encoding")
     parser.add_argument("--texture-size", type=int, default=2048,
-                        help="Output texture map resolution (pixels)")
-    parser.add_argument("--steps", type=int, default=12,
+                        help="Output texture map resolution (pixels, e.g. 2048 or 4096)")
+    parser.add_argument("--steps", type=int, default=5,
                         help="Number of flow ODE solver steps")
-    parser.add_argument("--guidance", type=float, default=1.0,
+    parser.add_argument("--guidance", type=float, default=3.0,
                         help="Classifier-free guidance strength")
     parser.add_argument("--guidance-rescale", type=float, default=0.0,
                         help="Guidance rescale factor")
@@ -48,6 +48,10 @@ def parse_args():
     parser.add_argument("--no-preprocess", action="store_true",
                         help="Skip image preprocessing (background removal). "
                              "Use if image already has alpha channel or clean background.")
+    parser.add_argument("--preserve-uvs", action="store_true",
+                        help="Use existing UV coordinates from the input mesh instead of re-unwrapping.")
+    parser.add_argument("--export-textures", action="store_true",
+                        help="Save albedo and metallic-roughness maps as PNG files next to the output GLB.")
     return parser.parse_args()
 
 
@@ -101,6 +105,7 @@ def main():
         image,
         seed=args.seed,
         preprocess_image=not args.no_preprocess,
+        preserve_uvs=args.preserve_uvs,
         tex_slat_sampler_params={
             "steps": args.steps,
             "guidance_strength": args.guidance,
@@ -120,6 +125,35 @@ def main():
     t3 = time.perf_counter()
     print(f"  Export:    {t3 - t2:.1f}s")
     print(f"  Total:     {t3 - t0:.1f}s")
+
+    if args.export_textures:
+        import numpy as np
+        from PIL import ImageDraw
+        stem = os.path.splitext(args.output)[0]
+        mat = output.visual.material
+        albedo = None
+        if hasattr(mat, 'baseColorTexture') and mat.baseColorTexture is not None:
+            path = stem + "_albedo.png"
+            mat.baseColorTexture.save(path)
+            print(f"  Albedo:    {path}")
+            albedo = mat.baseColorTexture
+        if hasattr(mat, 'metallicRoughnessTexture') and mat.metallicRoughnessTexture is not None:
+            path = stem + "_metallic_roughness.png"
+            mat.metallicRoughnessTexture.save(path)
+            print(f"  MetalRough:{path}")
+        # UV debug overlay
+        if albedo is not None and hasattr(output.visual, 'uv') and output.visual.uv is not None:
+            uv = np.array(output.visual.uv)
+            faces = output.faces
+            w, h = albedo.size
+            debug = albedo.convert("RGBA").copy()
+            draw = ImageDraw.Draw(debug)
+            for tri in faces:
+                pts = [(float(uv[i, 0]) * w, float(uv[i, 1]) * h) for i in tri]
+                draw.polygon(pts, outline=(0, 255, 0, 180))
+            path = stem + "_debug.png"
+            debug.save(path)
+            print(f"  Debug UV:  {path}")
 
 
 if __name__ == "__main__":
