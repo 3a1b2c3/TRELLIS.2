@@ -103,7 +103,7 @@ class Trellis2TexturingPipeline(Pipeline):
             if self.rembg_model is not None:
                 self.rembg_model.to(device)
 
-    def preprocess_mesh(self, mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    def preprocess_mesh(self, mesh: trimesh.Trimesh, preserve_uvs: bool = False) -> trimesh.Trimesh:
         """
         Preprocess the input mesh.
         """
@@ -117,7 +117,8 @@ class Trellis2TexturingPipeline(Pipeline):
         vertices[:, 1] = -vertices[:, 2]
         vertices[:, 2] = tmp
         assert np.all(vertices >= -0.5) and np.all(vertices <= 0.5), 'vertices out of range'
-        return trimesh.Trimesh(vertices=vertices, faces=mesh.faces, process=False)
+        visual = mesh.visual if preserve_uvs else None
+        return trimesh.Trimesh(vertices=vertices, faces=mesh.faces, visual=visual, process=False)
 
     def preprocess_image(self, input: Image.Image) -> Image.Image:
         """
@@ -291,9 +292,9 @@ class Trellis2TexturingPipeline(Pipeline):
         resolution: int = 1024,
         texture_size: int = 1024,
     ) -> trimesh.Trimesh:
-        vertices = mesh.vertices
+        vertices = mesh.vertices.copy()
         faces = mesh.faces
-        normals = mesh.vertex_normals
+        normals = mesh.vertex_normals.copy()
         vertices_torch = torch.from_numpy(vertices).float().cuda()
         faces_torch = torch.from_numpy(faces).int().cuda()
         if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
@@ -382,6 +383,7 @@ class Trellis2TexturingPipeline(Pipeline):
         seed: int = 42,
         tex_slat_sampler_params: dict = {},
         preprocess_image: bool = True,
+        preserve_uvs: bool = False,
         resolution: int = 1024,
         texture_size: int = 2048,
     ) -> trimesh.Trimesh:
@@ -394,10 +396,11 @@ class Trellis2TexturingPipeline(Pipeline):
             seed (int): The random seed.
             tex_slat_sampler_params (dict): Additional parameters for the texture latent sampler.
             preprocess_image (bool): Whether to preprocess the image.
+            preserve_uvs (bool): Whether to preserve existing UV coordinates from the input mesh.
         """
         if preprocess_image:
             image = self.preprocess_image(image)
-        mesh = self.preprocess_mesh(mesh)
+        mesh = self.preprocess_mesh(mesh, preserve_uvs=preserve_uvs)
         torch.manual_seed(seed)
         cond = self.get_cond([image], 512) if resolution == 512 else self.get_cond([image], 1024)
         shape_slat = self.encode_shape_slat(mesh, resolution)
